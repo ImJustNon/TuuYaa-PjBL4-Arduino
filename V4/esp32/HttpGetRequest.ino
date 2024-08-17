@@ -1,11 +1,9 @@
-// ========================= post request function =========================
-String HttpPostRequest(const char* serverName, const char* postData) {
+String HttpGetRequest(const char* serverName) {
   WiFiClient client;
   HTTPClient http;
   http.setTimeout(30000);
   http.begin(client, serverName);
-  http.addHeader("Content-Type", "application/json");
-  int httpResponseCode = http.POST(postData);
+  int httpResponseCode = http.GET();
   String payload = "{}";
   if (httpResponseCode > 0) {
     Serial.print("HTTP Response code: ");
@@ -16,7 +14,5 @@ String HttpPostRequest(const char* serverName, const char* postData) {
     Serial.println(httpResponseCode);
   }
   http.end();
-  lcd.setCursor(0, 0); lcd.print("Status : Ready  ");
-  lcd.setCursor(0, 1); lcd.print("HTTP : " + String(httpResponseCode) + "     ");
   return payload;
 }

@@ -8,33 +8,38 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
+const int alertDelay = 500;
 // กำหนดพินสำหรับ Buzzer
-const int alertBuzzerPin = 55;
-const int stopSwitchPin = 56;
+const int alertBuzzerPin = 23;
+const int stopSwitchPin = 15;
 // กำหนดพินสำหรับแถวและคอลัมน์
-const int rowPins[7] = {65,66,67,68,69,70,71};
-const int colPins[4] = {72,73,74,75};
-// อาร์เรย์สำหรับเก็บสถานะของ LED
-bool ledMatrix[7][4] = {
-  {false, false, false, false}, // แถว 1
-  {false, false, false, false}, // แถว 2
-  {false, false, false, false}, // แถว 3
-  {false, false, false, false}, // แถว 4
-  {false, false, false, false}, // แถว 5
-  {false, false, false, false}, // แถว 6
-  {false, false, false, false}  // แถว 7
-};
+const int relay_1 = 32;
+const int relay_2 = 33;
+const int relay_3 = 25;
+const int relay_4 = 26;
+const int relay_5 = 27;
+const int relay_6 = 14;
+const int relay_7 = 12;
+
+const int relay_A = 18;
+const int relay_B = 5;
+const int relay_C = 17;
+const int relay_D = 16;
+
 // ตั้งค่า
 const String boxKey = "nonlnwza";
-const String postCheckTime = "http://192.168.8.52:8899/api/alert/check";
-const String postRemoveTime = "http://192.168.8.52:8899/api/alert/remove";
+const String postCheckTime = "http://192.168.74.52:8899/api/alert/gettoday";
+const String postRemoveTime = "http://192.168.74.52:8899/api/alert/remove";
 // stupid var
 unsigned long lastTime = 0;
 unsigned long timerDelay = 1000;
 int enableWifiReconnect = 0;
 bool startAlert = false;
 String alertJsonData = "";
+String mealJsonData = "";
+int mealCount = 0;
 String alertDataId = "";
+String selectedLedChannel = "";
 // genious var
 String jsonBuffer;
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -44,23 +49,16 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org");
 
 void setup() {
   Serial.begin(9600);
-  pinMode(alertBuzzerPin, OUTPUT); // ตั้งค่าพิน Buzzer เป็น OUTPUT
+  
   // ตั้งค่า LCD
   lcd.begin();
   lcd.backlight();
   lcd.setCursor(0, 0); lcd.print("                ");
   lcd.setCursor(0, 1); lcd.print("                ");
   // ตั้งค่าพินแถวเป็น OUTPUT
-  for (int i = 0; i < 7; i++) {
-    pinMode(rowPins[i], OUTPUT);
-    digitalWrite(rowPins[i], LOW);
-  }
-  // ตั้งค่าพินคอลัมน์เป็น OUTPUT
-  for (int i = 0; i < 4; i++) {
-    pinMode(colPins[i], OUTPUT);
-    digitalWrite(colPins[i], HIGH); // ใช้ HIGH เพราะจะใช้ LOW เพื่อเปิด LED
-  }
-  
+  SetupModulePins();
+  SetupDefaultStatusForEachModule();
+
   WiFiManager wifiManager;
   lcd.setCursor(0, 0); lcd.print("SSID : ESP32_AP");
   lcd.setCursor(0, 1); lcd.print("IP : 192.168.4.1");
@@ -97,10 +95,11 @@ void loop() {
   if ((millis() - lastTime) > timerDelay) {
     if (WiFi.status() == WL_CONNECTED) {
       enableWifiReconnect = 1; // enable wifi re-connection
-      getAlertTime();
+      updateAlertTime();
       checkAlertTime();
-      ScanLedChange();
-      StartAlertSound();
+      // removeAlertTime();
+      // ScanLedChange();
+      // StartAlertSound();
       // Serial.println(GetCurrentTime());
     } else {
       Serial.println("WiFi Disconnected");
@@ -114,7 +113,7 @@ void loop() {
   }
 }
 
-void getAlertTime(){
+void updateAlertTime(){
   String currentTime = GetCurrentTime();
   String postJsonData = "{\"boxKey\":\"" + boxKey + "\", \"currentTime\": \"" + currentTime + "\" }";
   String checkTimeData = HttpPostRequest(postCheckTime.c_str(), postJsonData.c_str());
@@ -137,24 +136,54 @@ void checkAlertTime(){
   JSONVar currentAlertArrayData = JSON.parse(currentAlertJsonData);
   int currentAlertArrayDataLength = currentAlertArrayData.length();
 
+  Serial.println(currentAlertArrayDataLength);
+
   if(currentAlertArrayDataLength != 0){ // have data
     for(int i = 0; i < currentAlertArrayDataLength; i++){
       String selectedAlertTimeData = currentAlertArrayData[i]["time"];
-      int selectedAlertTimeInt = selectedAlertTimeData.toInt();
-      int currentTimeInt = currentTime.toInt();
+      unsigned long long selectedAlertTimeInt = strtoull(selectedAlertTimeData.c_str(), NULL, 10);
+      unsigned long long currentTimeInt = strtoull((currentTime + "000").c_str(), NULL, 10);
 
+      Serial.println(selectedAlertTimeInt);
+      Serial.println(currentTimeInt);
+      
       if(currentTimeInt > selectedAlertTimeInt){ // เช็คเวลาปัจจุบันกับเวลาทั้งหมดในขอมูลเเจ้งเตือน
         String selectedAlertSlotData = currentAlertArrayData[i]["slot"];
-        int selectedAlertSlotDataFirstNumber = String(selectedAlertSlotData.charAt(0)).toInt();
-        int selectedAlertSlotDataSecondNumber = String(selectedAlertSlotData.charAt(1)).toInt();
-        String selectedAlertIdData = currentAlertArrayData[i]["id"];
+        int selectedAlertIdData = currentAlertArrayData[i]["id"];
+        JSONVar selectedMealData = currentAlertArrayData[i]["meal"];
+        mealCount = selectedMealData.length();
+        selectedLedChannel = selectedAlertSlotData;
+        String joinedMealData = JoinArray(selectedMealData);
 
-        ledMatrix[selectedAlertSlotDataFirstNumber][selectedAlertSlotDataSecondNumber] = true;
-        startAlert = true;
-        alertDataId = selectedAlertIdData;
-        break;
+        Serial.println(joinedMealData);
+
+        if(selectedMealData.length() > 1){ // have two meal
+          for(int i = 0; i < selectedMealData.length(); i++){
+            WriteAlertLed(selectedAlertSlotData, LOW);
+            lcd.setCursor(0, 0); lcd.print("Channel : " + String(selectedAlertSlotData) + "     ");
+            lcd.setCursor(0, 1); lcd.print("Meal : " + String(joinedMealData) + "     ");
+            startAlert = true;
+            alertDataId = String(selectedAlertIdData);
+            StartAlertSound();
+            if(i == selectedMealData.length() - 1){
+              break;
+            }
+            delay(1 * 60 * 60 * 1000); //3600000 // 1hr
+          }
+          break;
+        }
+        else {
+          WriteAlertLed(selectedAlertSlotData, LOW);
+          lcd.setCursor(0, 0); lcd.print("Channel : " + String(selectedAlertSlotData) + "     ");
+          lcd.setCursor(0, 1); lcd.print("Meal : " + String(joinedMealData) + "     ");
+          startAlert = true;
+          alertDataId = String(selectedAlertIdData);
+          StartAlertSound();
+          break;
+        }
       }
     }
+    removeAlertTime();
   }
 }
 
@@ -167,16 +196,32 @@ void StartAlertSound(){
       delay(500);
       int stopSwitchStatus = digitalRead(stopSwitchPin);
 
-      if(stopSwitchStatus == 0){
+      if(stopSwitchStatus == 0){ // it will be 1 when touch switch
         startAlert = false;
+        WriteAlertLed(selectedLedChannel, HIGH); // turn light off
+        digitalWrite(alertBuzzerPin, HIGH); // turn buzzer off
+        lcd.setCursor(0, 0); lcd.print("Channel : Opened           ");
+
+        int closeChannelSwitchCheck = true;
+        while(closeChannelSwitchCheck){
+          int switchStatusValue = digitalRead(stopSwitchPin);
+          delay(2000);
+          if(switchStatusValue == 1){
+            closeChannelSwitchCheck = false;
+            lcd.setCursor(0, 0); lcd.print("Channel : Closed           ");
+          }
+        }
       }
-    }
-    RemoveAlertTime();    
+    }  
+    // RemoveAlertTime();  
     // ESPRestart();
   }
 }
 
-void RemoveAlertTime(){
+void removeAlertTime(){
+  // removeAlertJsonDataFromArray();
+  Serial.println(alertJsonData);
+
   String alertId = alertDataId;
   String postJsonData = "{\"boxKey\":\"" + boxKey + "\", \"alertId\": \"" + alertId + "\" }";
   String removeTimeData = HttpPostRequest(postRemoveTime.c_str(), postJsonData.c_str());
@@ -186,7 +231,26 @@ void RemoveAlertTime(){
     return;
   }
   String removeTimeDataObjectPost_ResponseStatus = removeTimeDataObjectPost["status"];
+
   // if(checkTimeDataObjectPost_ResponseStatus == "OK"){
   //   // ESPRestart();
   // }
 }
+
+// void removeAlertJsonDataFromArray(){
+//   int idToRemove = alertDataId.toInt();
+//   JSONVar alertDataParsedJson = JSON.parse(alertJsonData);
+//   Serial.println(alertDataParsedJson.length());
+//   JSONVar newArray;
+//   if(alertDataParsedJson.length() != 0){
+//     for (int i = 0; i < alertDataParsedJson.length(); i++) {
+//       int scanForCheckId = alertDataParsedJson[i]["id"];
+//       if (scanForCheckId != idToRemove){
+//         // If it doesn't match, add it to the new array
+//         int indexlegth = newArray.length() || 0;
+//         newArray[indexlegth] = alertDataParsedJson[i];
+//       }
+//     }
+//     alertJsonData = String(JSON.stringify(newArray));
+//   }
+// }
